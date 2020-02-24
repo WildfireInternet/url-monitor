@@ -1,1 +1,4 @@
 vendor/
+token.json
+credentials.json
+.spreadsheetId

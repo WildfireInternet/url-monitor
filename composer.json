@@ -1,7 +1,6 @@
 {
     "name": "andrew/url-crawler",
     "require-dev": {
-        "stilliard/csvparser": "^1.1"
     },
     "authors": [
         {
@@ -12,6 +11,6 @@
     "require": {
         "chuyskywalker/rolling-curl": "dev-master",
         "phpunit/php-timer": "^2.1",
-        "krisseck/detect-cms": "dev-master"
+        "google/apiclient": "^2.0"
     }
 }

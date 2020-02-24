@@ -6,73 +6,41 @@ use RollingCurl\RollingCurl;
 use SebastianBergmann\Timer\Timer;
 
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/helpers/get_google_client.php';
+require_once __DIR__ . '/helpers/detect_cms.php';
+require_once __DIR__ . '/helpers/detect_trackers.php';
 
-// open the file
-$filename = __DIR__ . '/initial-list.csv';
-$parser = new Parser;
-$csv = $parser->fromFile($filename);
-$sites = $parser->toArray($csv);
+// get the folder ID
+if (! file_exists(__DIR__ . '/.spreadsheetId') || ! ($spreadsheetId = file_get_contents(__DIR__ . '/.spreadsheetId'))) {
+    die("Please setup the .spreadsheetId file with the Google Spreadsheed file ID\n");
+}
 
-// a simple cms/platform detection
-// TODO: convert to a Wappalyzer apps.json parser but only reading the cms/platofrm category
-function detectCMS(string $html) : ?string
-{
-    $searches = [
-        'woocommerce' => [
-            '/wp-content\/plugins\/woocommerce/i',
-        ],
-        'wordpress' => [
-            '/wp-content/i',
-            '/wp-includes/i',
-        ],
-        'magento' => [
-            '/skin\/frontend/i',
-            '/static\/frontend/i',
-            '/static\/version\d+\/frontend\//i',
-            '/\/mage\//i',
-        ],
-        'shopify' => [
-            '/cdn.shopify.com\//i',
-        ],
-        'rec+' => [
-            '/css\/master-v\d+\.css/i',
-        ],
-        'joomla' => [
-            '/joomla/i'
-        ],
-        'opencart' => [
-            '/opencart/i'
-        ],
-        'websphere' => [ // IBM WebSphere Commerce
-            '/wcsstore/i'
-        ],
-        'cs-cart' => [
-            '/cs-cart/i'
-        ],
-        'down-for-maintenance' => [
-            '/MaintenancePage/i',
-            '/down for Maintenance/i',
-            '/work in progress/i',
-            '/redeveloping our website/i',
-            '/be right back/i',
-            '/reserved for future use/i',
-            '/there is a problem with the website/i',
-        ],
-    ];
+// Get the API client and construct the service object.
+$client = getClient();
+$service = new Google_Service_Drive($client);
 
-    $platform = null;
-    foreach ($searches as $name => $search) {
-        foreach ($search as $pattern) {
-            if (preg_match($pattern, $html)) {
-                $platform = $name;
-                break;
-            }
+// download the file from google spreadsheets
+$service = new Google_Service_Sheets($client);
+$columnRange = 'A:R';
+$response = $service->spreadsheets_values->get($spreadsheetId, $columnRange);
+
+// map the google spreadsheet data to a key value format we can work with
+$keys = [];
+$sites = [];
+$rows = array_filter($response->values, function ($row) {
+    return $row && $row[0];
+});
+foreach ($rows as $i => $line) {
+    if ($i == 0) {
+        // first row => keys
+        $keys = array_filter($line);
+    } else {
+        $site = [];
+        foreach ($keys as $index => $key) {
+            $site[$key] = $line[$index] ?? '';
         }
-        if ($platform) {
-            break;
-        }
+        $sites[] = $site;
     }
-    return $platform;
 }
 
 // start up rolling curl
@@ -138,19 +106,19 @@ $rollingCurl->setCallback(function(Request $req) use (&$results, $sites, $today)
 
     // Uses adwords?
     $usesAdwords = 0;
-    if ($body && preg_match('/adwords/i', $body, $matches)) {
+    if ($body && detectAdwords($body)) {
         $usesAdwords = 1;
     }
 
     // Uses facebook tracking pixel?
     $usesFBTracking = 0;
-    if ($body && preg_match('/fbq\(/i', $body, $matches)) {
+    if ($body && detectFBTracking($body)) {
         $usesFBTracking = 1;
     }
 
     $results[] = [
         'url' => $url,
-        
+
         'prev_http_code' => $prev['http_code'] != $responseInfo['http_code'] ? $prev['http_code'] : $prev['prev_http_code'],
         'http_code' => $responseInfo['http_code'],
         'http_code_last_changed' => $prev['http_code'] != $responseInfo['http_code'] ? $today : $prev['http_code_last_changed'],
@@ -170,7 +138,7 @@ $rollingCurl->setCallback(function(Request $req) use (&$results, $sites, $today)
         'prev_uses_fb_tracking' => $prev['uses_fb_tracking'] != $usesFBTracking ? $prev['uses_fb_tracking'] : (int) $prev['prev_uses_fb_tracking'],
         'uses_fb_tracking' => $usesFBTracking,
         'uses_fb_tracking_last_changed' => $prev['uses_fb_tracking'] != $usesFBTracking ? $today : $prev['uses_fb_tracking_last_changed'],
-        
+
         // a few vars to help us debug & might also be useful in the spreadsheet anyway :)
         'debug_req_time' => $responseInfo['total_time'],
         'debug_title' => $title,
@@ -181,10 +149,34 @@ $rollingCurl->setCallback(function(Request $req) use (&$results, $sites, $today)
 
 $rollingCurl->setSimultaneousLimit(20);
 $rollingCurl->execute();
+echo "!\n"; // show to say it's finished the crawling
 
-// write back to the file
-$csv = $parser->fromArray($results);
-$parser->toFile($csv, $filename);
+// sort results alphabetically by site
+usort($results, function ($a, $b) {
+    return $a['url'] <=> $b['url'];
+});
+
+// update the previous response values
+$keys = array_keys($results[0]);
+$spreadsheetValues = [
+    $keys, // first line is the column keys
+];
+foreach ($results as $site) {
+    $line = [];
+    foreach ($keys as $key) {
+        $line[] = (string) $site[$key];
+    }
+    $spreadsheetValues[] = $line;
+}
+// var_dump($spreadsheetValues[0], $spreadsheetValues[1], count($sites), count($results));
+
+// & update the google spreadsheet file
+$response->setValues($spreadsheetValues);
+$response->setRange($columnRange);
+$response = $service->spreadsheets_values->update($spreadsheetId, $columnRange, $response, ["valueInputOption" => "RAW"]);
+
+echo 'Google API response:';
+var_dump($response);
 
 // show timer & resource usage
-echo "!\n", Timer::resourceUsage(), "\n";
+echo Timer::resourceUsage(), "\n";
