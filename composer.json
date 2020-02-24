@@ -1,0 +1,17 @@
+{
+    "name": "andrew/url-crawler",
+    "require-dev": {
+        "stilliard/csvparser": "^1.1"
+    },
+    "authors": [
+        {
+            "name": "Andrew Stilliard",
+            "email": "andrew.stilliard@gmail.com"
+        }
+    ],
+    "require": {
+        "chuyskywalker/rolling-curl": "dev-master",
+        "phpunit/php-timer": "^2.1",
+        "krisseck/detect-cms": "dev-master"
+    }
+}
